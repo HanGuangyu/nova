@@ -420,6 +420,10 @@ class Instance(BASE, NovaBase, models.SoftDeleteMixin):
 
     hidden = sa.Column(sa.Boolean, default=False)
 
+    # Identifies the high or low priority of the Instance.
+    # If this property is not set, the current instance is a common instance.
+    priority = sa.Column(sa.String(255))
+
 
 class InstanceInfoCache(BASE, NovaBase, models.SoftDeleteMixin):
     """Represents a cache of information about an instance
