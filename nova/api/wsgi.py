@@ -234,6 +234,7 @@ class Loader(object):
         """
         self.config_path = None
 
+        # HGY: CONF = oslo_config.cfg:ConfigOpts()
         config_path = config_path or CONF.wsgi.api_paste_config
         if not os.path.isabs(config_path):
             self.config_path = CONF.find_file(config_path)

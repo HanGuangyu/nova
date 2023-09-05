@@ -1650,7 +1650,10 @@ class API:
         """
 
         # Normalize and setup some parameters
+        # API.create()函数调用API._create_instance时()并没有传入reservation_id，
+        # create instance流程中reservation_id此处为None
         if reservation_id is None:
+            # id是否有重复风险？有什么预防机制么，还是接受微小概率的重复
             reservation_id = utils.generate_uid('r')
         security_groups = security_groups or ['default']
         min_count = min_count or 1
@@ -1658,7 +1661,33 @@ class API:
         block_device_mapping = block_device_mapping or []
         tags = tags or []
 
+        # 获取镜像元数据
         if image_href:
+            # (pdb) pp image_id
+            # 'b1b20fde-05fb-4195-81d2-d9e3ffa8ba59'
+            # (pdb) pp boot_meta
+            # {'checksum': '74f8bf8534f6822dfcf8c458180c310c',
+            #  'container_format': 'bare',
+            #  'created_at': datetime.datetime(2023, 9, 28, 4, 47, 12, tzinfo=datetime.timezone.utc),
+            #  'deleted': False,
+            #  'deleted_at': None,
+            #  'disk_format': 'qcow2',
+            #  'id': 'b1b20fde-05fb-4195-81d2-d9e3ffa8ba59',
+            #  'is_public': True,
+            #  'min_disk': 0,
+            #  'min_ram': 0,
+            #  'name': 'jammy-server-cloudimg-arm64.img',
+            #  'os_hash_algo': 'sha512',
+            #  'os_hash_value': '7efbba6804ce3248a28a4400fb7183c1d827b682ffff964bcccf7f342a2b6775649f88747c741585124d25d0f6b135cb00b793e81537ef69596beefa05acf6b3',
+            #  'os_hidden': False,
+            #  'owner': '47ca6a7fd0df4a6e8cb00bfb4de19e55',
+            #  'properties': {'owner_specified.openstack.md5': '',
+            #                 'owner_specified.openstack.object': 'images/jammy-server-cloudimg-arm64.img',
+            #                 'owner_specified.openstack.sha256': ''},
+            #  'size': 652738560,
+            #  'status': 'active',
+            #  'stores': 'file',
+            #  'updated_at': datetime.datetime(2023, 9, 28, 4, 47, 18, tzinfo=datetime.timezone.utc)}
             image_id, boot_meta = self._get_image(context, image_href)
         else:
             # This is similar to the logic in _retrieve_trusted_certs_object.
@@ -1677,6 +1706,7 @@ class API:
         self._check_auto_disk_config(image=boot_meta,
                                      auto_disk_config=auto_disk_config)
 
+        # 验证创建虚拟机的相关参数
         (
             base_options, max_net_count, key_pair, security_groups,
             network_metadata,
@@ -2194,6 +2224,7 @@ class API:
         if hostname and max_count is not None and max_count > 1:
             raise exception.AmbiguousHostnameForMultipleInstances()
 
+        # 检测可用域是否可用
         if availability_zone and forced_host is None:
             azs = availability_zones.get_availability_zones(
                 context.elevated(), self.host_api, get_only_available=True)
@@ -2201,6 +2232,10 @@ class API:
                 msg = _('The requested availability zone is not available')
                 raise exception.InvalidRequest(msg)
 
+        # 将虚拟机配置规格（flavor）和指定的宿主计算节点信息构建为一个字典，用于后面筛选合适的计算节点。
+        # (Pdb) pp filter_properties
+        # {'instance_type': Flavor(created_at=2023-08-28T08:17:13Z,deleted=False,deleted_at=None,description=None,disabled=False,ephemeral_gb=0,extra_specs={},flavorid='1',id=1,is_public=True,memory_mb=512,name='m1.tiny',projects=<?>,root_gb=1,rxtx_factor=1.0,swap=0,updated_at=None,vcpu_weight=0,vcpus=1),
+        #  'scheduler_hints': {}}
         filter_properties = scheduler_utils.build_filter_properties(
             scheduler_hints, forced_host, forced_node, flavor)
 
