@@ -1651,6 +1651,7 @@ class API:
 
         # Normalize and setup some parameters
         if reservation_id is None:
+            # id是否有重复风险？有什么预防机制么，还是接受微小概率的重复
             reservation_id = utils.generate_uid('r')
         security_groups = security_groups or ['default']
         min_count = min_count or 1
@@ -1658,6 +1659,7 @@ class API:
         block_device_mapping = block_device_mapping or []
         tags = tags or []
 
+        # 获取镜像元数据
         if image_href:
             image_id, boot_meta = self._get_image(context, image_href)
         else:
@@ -1677,6 +1679,7 @@ class API:
         self._check_auto_disk_config(image=boot_meta,
                                      auto_disk_config=auto_disk_config)
 
+        # 验证创建虚拟机的相关参数
         (
             base_options, max_net_count, key_pair, security_groups,
             network_metadata,
@@ -2194,6 +2197,7 @@ class API:
         if hostname and max_count is not None and max_count > 1:
             raise exception.AmbiguousHostnameForMultipleInstances()
 
+        # 检测可用域是否可用
         if availability_zone and forced_host is None:
             azs = availability_zones.get_availability_zones(
                 context.elevated(), self.host_api, get_only_available=True)
@@ -2201,6 +2205,10 @@ class API:
                 msg = _('The requested availability zone is not available')
                 raise exception.InvalidRequest(msg)
 
+        # 将虚拟机配置规格（flavor）和指定的宿主计算节点信息构建为一个字典，用于后面筛选合适的计算节点。
+        # (Pdb) pp filter_properties
+        # {'instance_type': Flavor(created_at=2023-08-28T08:17:13Z,deleted=False,deleted_at=None,description=None,disabled=False,ephemeral_gb=0,extra_specs={},flavorid='1',id=1,is_public=True,memory_mb=512,name='m1.tiny',projects=<?>,root_gb=1,rxtx_factor=1.0,swap=0,updated_at=None,vcpu_weight=0,vcpus=1),
+        #  'scheduler_hints': {}}
         filter_properties = scheduler_utils.build_filter_properties(
             scheduler_hints, forced_host, forced_node, flavor)
 

@@ -513,6 +513,31 @@ class ServersController(wsgi.Controller):
         elif block_device_mapping_v2:
             # Have to check whether --image is given, see bug 1433609
             image_href = server_dict.get('imageRef')
+            # 如果 image_href 不为 None，则将变量 image_uuid_specified 设置为 True，否则设置为 False。
+            #  `is`, `is not`是Python中的比较运算符，用来比对两个变量引用的是否是同一个对象
+            # `==`, `!=`也是比较运算符，但此二者是用来比较两个变量的值是否相等
+            """
+            > http://c.biancheng.net/view/4258.html
+            == 用来比较两个变量的值是否相等，而 is 则用来比对两个变量引用的是否是同一个对象，例如：
+```        
+import time  #引入time模块
+t1 = time.gmtime() # gmtime()用来获取当前时间
+t2 =  time.gmtime()
+print(t1 == t2) #输出True
+print(t1 is t2) #输出False
+```
+运行结果：
+```
+True
+False
+```
+
+time 模块的 gmtime() 方法用来获取当前的系统时间，精确到秒级，因为程序运行非常快，所以 t1 和 t1 得到的时间是一样的。== 用来判断 t1 和 t2 的值是否相等，所以返回 True。
+
+虽然 t1 和 t2 的值相等，但它们是两个不同的对象（每次调用 gmtime() 都返回不同的对象），所以t1 is t2返回 False。这就好像两个双胞胎姐妹，虽然她们的外貌是一样的，但它们是两个人。
+
+那么，如何判断两个对象是否相同呢？答案是判断两个对象的内存地址。如果内存地址相同，说明两个对象使用的是同一块内存，当然就是同一个对象了；这就像两个名字使用了同一个身体，当然就是同一个人了。
+            """
             image_uuid_specified = image_href is not None
             try:
                 block_device_mapping = [
@@ -682,6 +707,34 @@ class ServersController(wsgi.Controller):
     @validation.schema(schema_servers.create_v294, '2.94')
     def create(self, req, body):
         """Creates a new server for a given user."""
+
+        """
+        $ openstack server create \
+             --image cirros \
+             --flavor m1.tiny \
+             --key-name mykey \
+             --network demo-net \
+             --security-group default --security-group default \
+             --boot-from-volume 1 \
+             --debug  demo2
+
+        body示例
+(pdb) pp body
+{'server': {'block_device_mapping_v2': [{'boot_index': 0,
+                                         'destination_type': 'volume',
+                                         'source_type': 'image',
+                                         'uuid': '874e5108-943e-4948-ad14-07337d83b028',
+                                         'volume_size': 1}],
+            'flavorRef': '1',
+            'imageRef': '',
+            'key_name': 'mykey',
+            'max_count': 1,
+            'min_count': 1,
+            'name': 'demo2',
+            'networks': [{'uuid': '6245e629-29dd-4002-b765-d26f9e4ec309'}],
+            'security_groups': [{'name': 'bc90603f-45e7-452c-941a-300fd41bcd50'},
+                                {'name': 'bc90603f-45e7-452c-941a-300fd41bcd50'}]}}
+        """
         context = req.environ['nova.context']
         server_dict = body['server']
         password = self._get_server_admin_password(server_dict)
@@ -705,8 +758,15 @@ class ServersController(wsgi.Controller):
         create_kwargs['config_drive'] = server_dict.get('config_drive')
         security_groups = server_dict.get('security_groups')
         if security_groups is not None:
+            # `if sg.get('name')`确保只有具有'name'字段的sg会被包括在新列表中
+            #
+            # 如果键（key）不存在于字典中，使用dict[key]会引发一个KeyError。
+            # 如果键（key）不存在于字典中，dict.get(key)默认返回None，而不会引发任何错误。可以提供一个可选的默认值，该值在键不存在时返回。
             create_kwargs['security_groups'] = [
                 sg['name'] for sg in security_groups if sg.get('name')]
+            # 先将列表（list）转换为集合（set），再将这个集合转换回列表（list）——去重。
+            # 去除重复的安全组
+            # set(): 用于创建一个集合，集合中的元素不会有重复。
             create_kwargs['security_groups'] = list(
                 set(create_kwargs['security_groups']))
 
@@ -729,6 +789,10 @@ class ServersController(wsgi.Controller):
         create_kwargs['min_count'] = min_count
         create_kwargs['max_count'] = max_count
 
+        # 从server_dict字典中移除并返回"availability_zone"键的值。如果该键不存在，它将返回None。
+        # 与get方法类似，pop也允许您提供一个默认值（在这里是None），该值将在键不存在时返回。
+        # 个人：用pop，而不是用.get或dict[key]？availability_zone用于生成target，和其他参数用于生成
+        # create_kwargs不同。从server_dict移除，后续代码再次使用到server_dict时不再涉及az
         availability_zone = server_dict.pop("availability_zone", None)
 
         if api_version_request.is_supported(req, min_version='2.52'):
@@ -741,6 +805,17 @@ class ServersController(wsgi.Controller):
             'project_id': context.project_id,
             'user_id': context.user_id,
             'availability_zone': availability_zone}
+        # 路径：nova.context.RequestContext.can()
+        # Verifies that the given action is valid on the target in this context.
+        """
+        （1）调用context.can()方法，执行policy检查，以确定当前上下文是否有权在给定的target
+        （项目id、用户id、可用区）上执行`create`操作
+        
+        （2）`server_policies.SERVERS % 'create'` 字符串格式化操作，将'create'字符串插入到
+        server_policies.SERVERS字符串中。
+        (pdb) pp server_policies.SERVERS
+        os_compute_api:servers:%s'
+        """
         context.can(server_policies.SERVERS % 'create', target)
 
         # Skip policy check for 'create:trusted_certs' if no trusted
@@ -751,6 +826,9 @@ class ServersController(wsgi.Controller):
             context.can(server_policies.SERVERS % 'create:trusted_certs',
                         target=target)
 
+        # A legacy hack: 管理员可以在availability_zone参数中，使用az:host:node或az::node这样的
+        # 格式，来指定特定的主机。
+        # 此处解析availability_zone参数，如果有指定主机，则进行相应检测（权限、host是否属于az）
         parse_az = self.compute_api.parse_availability_zone
         try:
             availability_zone, host, node = parse_az(context,
@@ -767,6 +845,8 @@ class ServersController(wsgi.Controller):
             self._process_hosts_for_create(context, target, server_dict,
                                            create_kwargs, host, node)
 
+        # bdm——block_device_mapping
+        # 处理server_dict中的bdm参数，最后存到create_kwargs['block_device_mapping']
         self._process_bdms_for_create(
             context, target, server_dict, create_kwargs)
 
@@ -783,6 +863,8 @@ class ServersController(wsgi.Controller):
             supports_multiattach = common.supports_multiattach_volume(req)
             supports_port_resource_request = \
                 common.supports_port_resource_request(req)
+            # **解包参数
+            # https://docs.python.org/3/tutorial/controlflow.html#unpacking-argument-lists
             instances, resv_id = self.compute_api.create(
                 context,
                 flavor,
